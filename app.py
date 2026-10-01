@@ -1,13 +1,18 @@
-import time
+round-color:#fee2e2; color:#991b1b; padding:4px 10px;
+    border-radius:999px; font-weight:600; font-size:0.85rem;}
+.risk-medium {backgrouimport time
 from datetime import datetime
 
-import joblib
 import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import shap
 import streamlit as st
+from sklearn.compose import ColumnTransformer
+from sklearn.ensemble import GradientBoostingClassifier
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
 # --------------------------------------------------------------------------
 # Page config & style
@@ -22,9 +27,7 @@ st.markdown("""
 <style>
 .big-title {font-size: 2rem; font-weight: 700; margin-bottom: 0;}
 .subtitle {color: #6b7280; margin-top: 0;}
-.risk-high {background-color:#fee2e2; color:#991b1b; padding:4px 10px;
-    border-radius:999px; font-weight:600; font-size:0.85rem;}
-.risk-medium {background-color:#fef3c7; color:#92400e; padding:4px 10px;
+.risk-high {backgnd-color:#fef3c7; color:#92400e; padding:4px 10px;
     border-radius:999px; font-weight:600; font-size:0.85rem;}
 .risk-low {background-color:#dcfce7; color:#166534; padding:4px 10px;
     border-radius:999px; font-weight:600; font-size:0.85rem;}
@@ -34,21 +37,38 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --------------------------------------------------------------------------
-# Load artifacts (cached)
+# Load data & train model in-app (cached) — avoids pickle/version mismatches
+# between the machine that saved a model file and the server running it.
 # --------------------------------------------------------------------------
-@st.cache_resource
-def load_artifacts():
-    model = joblib.load("model.joblib")
-    bg_sample = joblib.load("bg_sample.joblib")
-    features = joblib.load("features.joblib")
-    num_features = joblib.load("num_features.joblib")
-    cat_features = joblib.load("cat_features.joblib")
-    return model, bg_sample, features, num_features, cat_features
-
-
 @st.cache_resource
 def load_history():
     return pd.read_csv("transactions.csv")
+
+
+@st.cache_resource
+def load_artifacts():
+    df = load_history()
+    num_features = ["amount", "hour_of_day", "distance_from_home_km",
+                     "account_age_days", "txns_last_1h", "avg_txn_amount_30d",
+                     "is_new_device", "is_new_merchant"]
+    cat_features = ["merchant_category", "payment_mode", "device_type"]
+    features = num_features + cat_features
+
+    X = df[features]
+    y = df["is_fraud"]
+
+    preprocessor = ColumnTransformer([
+        ("num", StandardScaler(), num_features),
+        ("cat", OneHotEncoder(handle_unknown="ignore"), cat_features),
+    ])
+    clf = GradientBoostingClassifier(
+        n_estimators=200, max_depth=3, learning_rate=0.1, random_state=42
+    )
+    model = Pipeline([("preprocessor", preprocessor), ("classifier", clf)])
+    model.fit(X, y)
+
+    bg_sample = X.sample(100, random_state=42)
+    return model, bg_sample, features, num_features, cat_features
 
 
 @st.cache_resource
